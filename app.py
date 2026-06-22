@@ -50,13 +50,17 @@ def get_api_key() -> str | None:
 
 
 # ----------------------------------------------------------------------------
-# CHAMADA AO MODELO
+# CHAMADA AO MODELO  (com cache — mesmo texto não gera nova chamada à API)
 # ----------------------------------------------------------------------------
+@st.cache_data(max_entries=500, ttl=86400, show_spinner=False)
 def call_deepseek(api_key: str, user_text: str, temperature: float = 0.2) -> str:
-    """Resposta completa (não-streaming)."""
+    """Resposta completa com cache de 24h por texto.
+    Mesmo input = zero tokens consumidos na repetição."""
     headers = {
         "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json",
+        # OpenRouter: ativa prompt caching do lado do provider quando suportado
+        "X-Title": "Catalogador-PDM",
     }
     payload = {
         "model": DEEPSEEK_MODEL,
@@ -441,6 +445,8 @@ def main():
         }
         if "input_text" not in st.session_state:
             st.session_state.input_text = ""
+        if "history" not in st.session_state:
+            st.session_state.history = []  # lista de {text, sections, raw}
         for col, (ex, tag) in zip(ex_cols, examples.items()):
             if col.button(f"{ex}\n({tag})", key=f"ex_{ex}", use_container_width=True):
                 st.session_state.input_text = ex
@@ -474,18 +480,45 @@ def main():
         if not api_key:
             st.error("Configure a chave da API antes de enquadrar.")
             return
-        with st.spinner("Enquadrando na taxonomia PDM…"):
-            try:
-                raw = call_deepseek(api_key, user_text.strip())
-            except requests.HTTPError as e:
-                st.error(f"Erro da API DeepSeek ({e.response.status_code}): {e.response.text[:300]}")
-                return
-            except Exception as e:
-                st.error(f"Falha na chamada: {e}")
-                return
-        sections = parse_sections(raw)
+
+        # normaliza para maximizar cache hit (remove espaços extras, lower)
+        normalized = " ".join(user_text.strip().lower().split())
+
+        # verifica se já existe no histórico desta sessão
+        cached_entry = next((h for h in st.session_state.history if h["text"] == normalized), None)
+
+        if cached_entry:
+            st.info("⚡ Resultado recuperado do histórico da sessão — sem consumo de tokens.")
+            st.write("")
+            render_result(cached_entry["sections"], cached_entry["raw"])
+        else:
+            with st.spinner("Enquadrando na taxonomia PDM…"):
+                try:
+                    raw = call_deepseek(api_key, normalized)
+                except requests.HTTPError as e:
+                    st.error(f"Erro da API DeepSeek ({e.response.status_code}): {e.response.text[:300]}")
+                    return
+                except Exception as e:
+                    st.error(f"Falha na chamada: {e}")
+                    return
+            sections = parse_sections(raw)
+            # guarda no histórico (máx 20 entradas)
+            st.session_state.history = ([{"text": normalized, "sections": sections, "raw": raw}]
+                                         + st.session_state.history)[:20]
+            st.write("")
+            render_result(sections, raw)
+
+    # --- histórico da sessão ---
+    if st.session_state.get("history"):
         st.write("")
-        render_result(sections, raw)
+        with st.expander(f"📋 Histórico desta sessão ({len(st.session_state.history)} enquadramento(s))"):
+            for i, entry in enumerate(st.session_state.history):
+                desc = extract_first_bold_or_line(entry["sections"].get("desc", ""))
+                col1, col2 = st.columns([3, 1])
+                col1.markdown(f"**`{desc or '—'}`**")
+                col2.caption(entry["text"][:60])
+                if i < len(st.session_state.history) - 1:
+                    st.divider()
 
 
 if __name__ == "__main__":
