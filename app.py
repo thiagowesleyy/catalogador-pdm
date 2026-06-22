@@ -15,8 +15,8 @@ from system_prompt import SYSTEM_PROMPT
 # ----------------------------------------------------------------------------
 # CONFIGURAÇÃO
 # ----------------------------------------------------------------------------
-DEEPSEEK_URL = "https://api.deepseek.com/chat/completions"
-DEEPSEEK_MODEL = "deepseek-chat"  # troque para o identificador do seu plano se necessário
+DEEPSEEK_URL = "https://openrouter.ai/api/v1/chat/completions"
+DEEPSEEK_MODEL = "deepseek/deepseek-chat"
 
 CORES = {
     "navy": "#24374B",
